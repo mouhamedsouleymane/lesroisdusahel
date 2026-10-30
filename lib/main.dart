@@ -1,20 +1,22 @@
 import 'package:flutter/material.dart';
+import 'config/app_theme.dart';
+import 'screens/splash_screen.dart';
 
 void main() {
-  runApp(const MainApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const LesRoisDuSahelApp());
 }
 
-class MainApp extends StatelessWidget {
-  const MainApp({super.key});
+class LesRoisDuSahelApp extends StatelessWidget {
+  const LesRoisDuSahelApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: Text('Hello World!'),
-        ),
-      ),
+    return MaterialApp(
+      title: 'Les Rois du Sahel',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme,
+      home: const SplashScreen(),
     );
   }
 }
