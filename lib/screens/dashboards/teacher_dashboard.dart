@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../config/app_theme.dart';
 import '../../models/user_model.dart';
 import '../../services/api_service.dart';
+import '../features/attendance_screen.dart';
+import '../features/grade_entry_screen.dart';
+import '../features/messages_screen.dart';
 
 class TeacherDashboard extends StatefulWidget {
   final UserModel user;
@@ -14,20 +18,31 @@ class TeacherDashboard extends StatefulWidget {
 
 class _TeacherDashboardState extends State<TeacherDashboard> {
   bool _isLoading = false;
-  String _speciality = 'Mathématiques · Cycle Secondaire';
-  String _matricule = 'ENS-2025-001';
-  int _classesCount = 3;
-  int _coursesCount = 5;
+  Timer? _syncTimer;
+  String _speciality = 'Enseignant';
+  String _matricule = '';
+  int _classesCount = 0;
+  int _coursesCount = 0;
   List<Map<String, dynamic>> _todayCourses = [];
 
   @override
   void initState() {
     super.initState();
-    _fetchTeacherData();
+    _fetchTeacherData(isInitial: true);
+    // Synchronisation automatique toutes les 10 secondes
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (mounted) _fetchTeacherData(isInitial: false);
+    });
   }
 
-  Future<void> _fetchTeacherData() async {
-    setState(() => _isLoading = true);
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetchTeacherData({bool isInitial = false}) async {
+    if (isInitial) setState(() => _isLoading = true);
     try {
       final response = await ApiService.get('/dashboard');
       if (response.statusCode == 200) {
@@ -37,31 +52,33 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
           final stats = data['stats'];
           final schedules = data['schedules'] as List<dynamic>?;
 
-          setState(() {
-            if (teacher != null) {
-              _speciality = teacher['speciality'] ?? _speciality;
-              _matricule = teacher['matricule'] ?? _matricule;
-            }
-            if (stats != null) {
-              _classesCount = stats['classes_count'] ?? _classesCount;
-              _coursesCount = stats['courses_count'] ?? _coursesCount;
-            }
-            if (schedules != null && schedules.isNotEmpty) {
-              _todayCourses = schedules.map((s) => {
-                'time': s['time']?.toString() ?? '08:00 - 10:00',
-                'subject': s['subject']?.toString() ?? 'Matière',
-                'class': s['class']?.toString() ?? 'Classe',
-                'room': s['room']?.toString() ?? 'Salle',
-                'isCurrent': false,
-              }).toList();
-            }
-          });
+          if (mounted) {
+            setState(() {
+              if (teacher != null) {
+                _speciality = teacher['speciality'] ?? _speciality;
+                _matricule = teacher['matricule'] ?? _matricule;
+              }
+              if (stats != null) {
+                _classesCount = stats['classes_count'] ?? _classesCount;
+                _coursesCount = stats['courses_count'] ?? _coursesCount;
+              }
+              if (schedules != null && schedules.isNotEmpty) {
+                _todayCourses = schedules.map((s) => {
+                  'time': s['time']?.toString() ?? '08:00 - 10:00',
+                  'subject': s['subject']?.toString() ?? 'Matière',
+                  'class': s['class']?.toString() ?? 'Classe',
+                  'room': s['room']?.toString() ?? 'Salle',
+                  'isCurrent': false,
+                }).toList();
+              }
+            });
+          }
         }
       }
     } catch (_) {
-      // Données de secours locales
+      // Données indisponibles
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (isInitial && mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -71,7 +88,7 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
       color: AppTheme.primaryPurple,
       onRefresh: _fetchTeacherData,
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
         children: [
           // En-tête Enseignant
           Container(
@@ -155,11 +172,7 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
                   icon: Icons.checklist_rtl,
                   label: 'Faire l\'appel',
                   color: Colors.blue.shade700,
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Module de pointage d\'appel en cours d\'initialisation.')),
-                    );
-                  },
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AttendanceScreen())),
                 ),
               ),
               const SizedBox(width: 12),
@@ -168,11 +181,16 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
                   icon: Icons.edit_note,
                   label: 'Saisir des notes',
                   color: AppTheme.primaryPurple,
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Module de saisie des évaluations activé.')),
-                    );
-                  },
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const GradeEntryScreen())),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _QuickButton(
+                  icon: Icons.forum_outlined,
+                  label: 'Messagerie',
+                  color: const Color(0xFF10B981),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesScreen())),
                 ),
               ),
             ],
@@ -181,20 +199,15 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
           const SizedBox(height: 24),
 
           // Emploi du temps
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Cours programmés', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppTheme.textDark)),
-              if (_isLoading)
-                const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryPurple))
-              else
-                TextButton(
-                  onPressed: _fetchTeacherData,
-                  child: const Text('Actualiser', style: TextStyle(fontSize: 12, color: AppTheme.primaryPurple, fontWeight: FontWeight.bold)),
-                ),
-            ],
+          const Text(
+            'Cours programmés',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: AppTheme.textDark,
+            ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
 
           if (_todayCourses.isNotEmpty)
             ..._todayCourses.map((c) => _CourseCard(
@@ -204,11 +217,32 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
               room: c['room'] ?? 'Salle',
               isCurrent: c['isCurrent'] == true,
             ))
-          else ...const [
-            _CourseCard(time: '08:00 - 10:00', subject: 'Mathématiques', schoolClass: '6ème A', room: 'Salle 12', isCurrent: true),
-            _CourseCard(time: '10:15 - 12:00', subject: 'Mathématiques', schoolClass: '5ème B', room: 'Salle 08', isCurrent: false),
-            _CourseCard(time: '15:00 - 17:00', subject: 'Soutien & Devoirs', schoolClass: '3ème A', room: 'Salle 15', isCurrent: false),
-          ],
+          else
+            Container(
+              padding: const EdgeInsets.all(24),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.borderLight),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.event_available, size: 48, color: Colors.grey.shade400),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Aucun cours programmé aujourd\'hui',
+                    style: TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textMuted, fontSize: 14),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Consultez l\'onglet "Horaires" pour voir l\'ensemble de votre emploi du temps hebdomadaire.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );

@@ -10,7 +10,7 @@ class AuthService {
   static UserModel? get currentUser => _currentUser;
   static bool get isAuthenticated => _currentUser != null;
 
-  // Restaurer la session existante depuis SharedPreferences
+  // Restaurer la session existante et actualiser les droits depuis MySQL
   static Future<UserModel?> loadSavedUser() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -18,7 +18,10 @@ class AuthService {
       if (userJsonStr != null && userJsonStr.isNotEmpty) {
         final Map<String, dynamic> data = jsonDecode(userJsonStr);
         _currentUser = UserModel.fromJson(data);
-        return _currentUser;
+
+        // Actualiser immédiatement le rôle et les permissions en temps réel depuis MySQL
+        final fresh = await refreshCurrentUser();
+        return fresh ?? _currentUser;
       }
     } catch (_) {}
     return null;
@@ -50,7 +53,7 @@ class AuthService {
           await prefs.setString(userKey, jsonEncode(_currentUser!.toJson()));
           return {'success': true, 'user': _currentUser};
         }
-      } else if (response.statusCode == 422) {
+      } else if (response.statusCode == 422 || response.statusCode == 403 || response.statusCode == 401) {
         final data = jsonDecode(response.body);
         return {'success': false, 'message': data['message'] ?? 'Identifiants invalides.'};
       }
@@ -62,47 +65,58 @@ class AuthService {
     return {'success': false, 'message': 'Impossible de joindre le serveur API. Vérifiez que php artisan serve est lancé sur le port 8000.'};
   }
 
-  // Connexion rapide pour démonstration de chaque rôle
-  static Future<UserModel> loginAsDemoRole(UserRole role) async {
-    final demoUsers = {
-      UserRole.admin: UserModel(
-        id: 1,
-        name: 'M. Le Proviseur',
-        email: 'admin@roisdusahel.com',
-        role: UserRole.admin,
-        matricule: 'DIR-001',
-      ),
-      UserRole.teacher: UserModel(
-        id: 2,
-        name: 'M. Mahamadou Issa',
-        email: 'm.issa@roisdusahel.com',
-        role: UserRole.teacher,
-        matricule: 'ENS-2025-0001',
-      ),
-      UserRole.parent: UserModel(
-        id: 3,
-        name: 'Mme Ousmane Fatouma',
-        email: 'parent.fatouma@gmail.com',
-        role: UserRole.parent,
-        phone: '+227 90 00 11 22',
-      ),
-      UserRole.student: UserModel(
-        id: 4,
-        name: 'Ousmane Sani Abakar',
-        email: 'eleve.sani@roisdusahel.com',
-        role: UserRole.student,
-        matricule: '2025-00862',
-      ),
-    };
+  // Connexion directe avec les comptes officiels de la base de données
+  static const Map<UserRole, Map<String, String>> officialRoleAccounts = {
+    UserRole.admin: {
+      'login': 'admin@roisdusahel.ne',
+      'password': 'Admin@2025!',
+    },
+    UserRole.teacher: {
+      'login': 'ali.oumarou@roisdusahel.ne',
+      'password': 'password',
+    },
+    UserRole.parent: {
+      'login': 'admin@admin.com',
+      'password': 'password',
+    },
+    UserRole.student: {
+      'login': 'RS-2025-0001',
+      'password': 'password',
+    },
+  };
 
-    final user = demoUsers[role] ?? demoUsers[UserRole.admin]!;
-    _currentUser = user;
+  static Future<UserModel?> loginAsDemoRole(UserRole role) async {
+    final creds = officialRoleAccounts[role] ?? officialRoleAccounts[UserRole.admin]!;
+    final result = await login(
+      email: creds['login']!,
+      password: creds['password']!,
+    );
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(userKey, jsonEncode(user.toJson()));
-    await ApiService.saveToken('demo-token-${role.name}');
+    if (result['success'] == true && result['user'] != null) {
+      return result['user'] as UserModel;
+    }
 
-    return user;
+    return null;
+  }
+
+  // Synchroniser le profil et le rôle en temps réel avec la base de données
+  static Future<UserModel?> refreshCurrentUser() async {
+    try {
+      final response = await ApiService.get('/user');
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true && data['user'] != null) {
+          _currentUser = UserModel.fromJson(data['user']);
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(userKey, jsonEncode(_currentUser!.toJson()));
+          return _currentUser;
+        }
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        await logout();
+        return null;
+      }
+    } catch (_) {}
+    return _currentUser;
   }
 
   static Future<void> logout() async {

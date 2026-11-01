@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../config/app_theme.dart';
 import '../../models/user_model.dart';
 import '../../services/api_service.dart';
+import '../features/messages_screen.dart';
+import '../features/report_cards_screen.dart';
+import '../tabs/schedules_screen.dart';
 
 class StudentDashboard extends StatefulWidget {
   final UserModel user;
@@ -14,20 +18,31 @@ class StudentDashboard extends StatefulWidget {
 
 class _StudentDashboardState extends State<StudentDashboard> {
   bool _isLoading = false;
-  String _className = '6ème A';
-  String _average = '15.75 / 20';
-  String _rank = '2ème de la classe';
-  String _attendance = '100 %';
+  Timer? _syncTimer;
+  String _className = '-';
+  String _average = '-';
+  String _rank = '-';
+  String _attendance = '-';
   List<Map<String, dynamic>> _grades = [];
 
   @override
   void initState() {
     super.initState();
-    _fetchStudentData();
+    _fetchStudentData(isInitial: true);
+    // Synchronisation automatique toutes les 10 secondes
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (mounted) _fetchStudentData(isInitial: false);
+    });
   }
 
-  Future<void> _fetchStudentData() async {
-    setState(() => _isLoading = true);
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetchStudentData({bool isInitial = false}) async {
+    if (isInitial) setState(() => _isLoading = true);
     try {
       final response = await ApiService.get('/dashboard');
       if (response.statusCode == 200) {
@@ -35,16 +50,18 @@ class _StudentDashboardState extends State<StudentDashboard> {
         if (data['success'] == true) {
           final student = data['student'];
           final stats = data['stats'];
-          setState(() {
-            if (student != null) {
-              _className = student['class'] ?? _className;
-            }
-            if (stats != null) {
-              _average = stats['average'] ?? _average;
-              _rank = '${stats['rank'] ?? "2ème"} de la classe';
-              _attendance = stats['attendance_rate'] ?? _attendance;
-            }
-          });
+          if (mounted) {
+            setState(() {
+              if (student != null) {
+                _className = student['class'] ?? _className;
+              }
+              if (stats != null) {
+                _average = stats['average'] ?? _average;
+                _rank = stats['rank'] != null ? '${stats['rank']} de la classe' : '-';
+                _attendance = stats['attendance_rate'] ?? _attendance;
+              }
+            });
+          }
         }
       }
 
@@ -54,23 +71,27 @@ class _StudentDashboardState extends State<StudentDashboard> {
         final gData = jsonDecode(gradesRes.body);
         if (gData['success'] == true && gData['evaluations'] != null) {
           final list = gData['evaluations'] as List<dynamic>;
-          if (list.isNotEmpty) {
+          if (mounted) {
             setState(() {
-              _grades = list.map((g) => {
-                'subject': g['subject'] ?? 'Matière',
-                'type': '${g['title'] ?? "Devoir"} (${g['period'] ?? ""})',
-                'score': '16.0 / ${g['max_score'] ?? 20}',
-                'coeff': 'Coeff 2',
-                'isGood': true,
+              _grades = list.map((g) {
+                final scoreVal = (g['score'] as num?)?.toDouble();
+                final maxScore = g['max_score'] ?? 20;
+                return {
+                  'subject': g['subject'] ?? 'Matière',
+                  'type': '${g['title'] ?? "Évaluation"} (${g['period'] ?? ""})',
+                  'score': scoreVal != null ? '$scoreVal / $maxScore' : '- / $maxScore',
+                  'coeff': 'Coeff ${g['coefficient'] ?? 1}',
+                  'isGood': scoreVal != null ? scoreVal >= 10 : true,
+                };
               }).toList();
             });
           }
         }
       }
     } catch (_) {
-      // Données locales
+      // Erreur API
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (isInitial && mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -80,7 +101,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
       color: AppTheme.primaryPurple,
       onRefresh: _fetchStudentData,
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
         children: [
           // Carte Élève
           Container(
@@ -140,17 +161,15 @@ class _StudentDashboardState extends State<StudentDashboard> {
           const SizedBox(height: 24),
 
           // Dernières notes obtenues
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Dernières notes enregistrées', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppTheme.textDark)),
-              TextButton(
-                onPressed: _fetchStudentData,
-                child: const Text('Actualiser', style: TextStyle(fontSize: 12, color: AppTheme.primaryPurple, fontWeight: FontWeight.bold)),
-              ),
-            ],
+          const Text(
+            'Dernières notes enregistrées',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: AppTheme.textDark,
+            ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
 
           if (_grades.isNotEmpty)
             ..._grades.take(6).map((g) => _GradeRow(
@@ -160,15 +179,72 @@ class _StudentDashboardState extends State<StudentDashboard> {
               coeff: g['coeff'],
               isGood: g['isGood'],
             ))
-          else ...const [
-            _GradeRow(subject: 'Mathématiques', type: 'Devoir 1', score: '17.5 / 20', coeff: 'Coeff 3', isGood: true),
-            _GradeRow(subject: 'Français', type: 'Composition 1', score: '14.0 / 20', coeff: 'Coeff 3', isGood: true),
-            _GradeRow(subject: 'Physique - Chimie', type: 'Devoir 1', score: '16.25 / 20', coeff: 'Coeff 2', isGood: true),
-            _GradeRow(subject: 'Histoire - Géo', type: 'Contrôle 1', score: '13.5 / 20', coeff: 'Coeff 2', isGood: true),
-            _GradeRow(subject: 'Anglais', type: 'Devoir 1', score: '15.0 / 20', coeff: 'Coeff 2', isGood: true),
-          ],
+          else
+            Container(
+              padding: const EdgeInsets.all(24),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.borderLight),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.assignment_outlined, size: 48, color: Colors.grey.shade400),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Aucune note enregistrée',
+                    style: TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textMuted, fontSize: 14),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Vos notes officielles saisies par vos professeurs apparaîtront ici.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                  ),
+                ],
+              ),
+            ),
 
           const SizedBox(height: 16),
+
+          // Raccourci Emploi du Temps & Bulletins
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ReportCardsScreen()),
+                  ),
+                  icon: const Icon(Icons.description_outlined, color: Colors.white, size: 18),
+                  label: const Text('Mes Bulletins', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10B981),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const MessagesScreen()),
+                  ),
+                  icon: const Icon(Icons.forum_outlined, color: Colors.white, size: 18),
+                  label: const Text('Messagerie', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryPurple,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
 
           // Raccourci Emploi du Temps
           Container(
@@ -192,11 +268,10 @@ class _StudentDashboardState extends State<StudentDashboard> {
                   ),
                 ),
                 ElevatedButton(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Accédez à l\'onglet "Horaires" dans la barre de navigation.')),
-                    );
-                  },
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => SchedulesScreen(user: widget.user)),
+                  ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primaryPurple,
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),

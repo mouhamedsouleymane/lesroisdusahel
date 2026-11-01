@@ -25,15 +25,18 @@ class AppTheme {
       ),
       scaffoldBackgroundColor: surfaceLight,
       appBarTheme: const AppBarTheme(
-        backgroundColor: primaryPurple,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        centerTitle: true,
+        backgroundColor: accentGold,
+        foregroundColor: primaryPurple,
+        elevation: 1,
+        centerTitle: false,
         titleTextStyle: TextStyle(
-          color: Colors.white,
-          fontSize: 18,
-          fontWeight: FontWeight.w800,
+          color: primaryPurple,
+          fontSize: 16,
+          fontWeight: FontWeight.w900,
           letterSpacing: 0.3,
+        ),
+        iconTheme: IconThemeData(
+          color: primaryPurple,
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(

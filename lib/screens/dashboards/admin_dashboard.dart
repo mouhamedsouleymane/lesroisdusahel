@@ -1,8 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../config/app_theme.dart';
 import '../../models/user_model.dart';
 import '../../services/api_service.dart';
+import '../features/attendance_screen.dart';
+import '../features/finances_screen.dart';
+import '../features/grade_entry_screen.dart';
+import '../features/messages_screen.dart';
+import '../tabs/schedules_screen.dart';
 
 class AdminDashboard extends StatefulWidget {
   final UserModel user;
@@ -14,39 +20,52 @@ class AdminDashboard extends StatefulWidget {
 
 class _AdminDashboardState extends State<AdminDashboard> {
   bool _isLoading = false;
-  String _studentsCount = '875';
-  String _classesCount = '25';
-  String _teachersCount = '24';
-  String _recoveryRate = '56.1 %';
-  String _academicYear = '2026-2027';
+  Timer? _syncTimer;
+  String _studentsCount = '-';
+  String _classesCount = '-';
+  String _teachersCount = '-';
+  String _recoveryRate = '-';
+  String _academicYear = 'Année en cours';
 
   @override
   void initState() {
     super.initState();
-    _fetchLiveStats();
+    _fetchLiveStats(isInitial: true);
+    // Synchronisation automatique toutes les 10 secondes
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (mounted) _fetchLiveStats(isInitial: false);
+    });
   }
 
-  Future<void> _fetchLiveStats() async {
-    setState(() => _isLoading = true);
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetchLiveStats({bool isInitial = false}) async {
+    if (isInitial) setState(() => _isLoading = true);
     try {
       final response = await ApiService.get('/dashboard');
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['success'] == true && data['stats'] != null) {
           final stats = data['stats'];
-          setState(() {
-            _studentsCount = stats['students_count']?.toString() ?? _studentsCount;
-            _classesCount = stats['classes_count']?.toString() ?? _classesCount;
-            _teachersCount = stats['teachers_count']?.toString() ?? _teachersCount;
-            _recoveryRate = '${stats['recovery_rate'] ?? 56.1} %';
-            _academicYear = data['academic_year'] ?? _academicYear;
-          });
+          if (mounted) {
+            setState(() {
+              _studentsCount = stats['students_count']?.toString() ?? '-';
+              _classesCount = stats['classes_count']?.toString() ?? '-';
+              _teachersCount = stats['teachers_count']?.toString() ?? '-';
+              _recoveryRate = '${stats['recovery_rate'] ?? 0} %';
+              _academicYear = data['academic_year'] ?? _academicYear;
+            });
+          }
         }
       }
     } catch (_) {
-      // Garde les valeurs par défaut si hors-ligne
+      // Erreur réseau ou API
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (isInitial && mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -56,7 +75,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       color: AppTheme.primaryPurple,
       onRefresh: _fetchLiveStats,
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
         children: [
           // Carte de bienvenue
           Container(
@@ -144,21 +163,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
           const SizedBox(height: 20),
 
           // Grille des statistiques clés (KPIs)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Vue d\'ensemble de l\'établissement',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppTheme.textDark),
-              ),
-              IconButton(
-                icon: const Icon(Icons.refresh, size: 18, color: AppTheme.primaryPurple),
-                tooltip: 'Actualiser les données',
-                onPressed: _fetchLiveStats,
-              ),
-            ],
+          const Text(
+            'Vue d\'ensemble de l\'établissement',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: AppTheme.textDark,
+            ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
 
           GridView.count(
             shrinkWrap: true,
@@ -188,25 +201,34 @@ class _AdminDashboardState extends State<AdminDashboard> {
             icon: Icons.calendar_month,
             title: 'Emplois du temps & Plages horaires',
             subtitle: 'Consulter et configurer les plannings par classe',
-            onTap: () {},
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => SchedulesScreen(user: widget.user)),
+            ),
           ),
           _ActionTile(
             icon: Icons.grade,
             title: 'Évaluations & Notes',
             subtitle: 'Suivi de la saisie des notes et moyennes',
-            onTap: () {},
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const GradeEntryScreen())),
           ),
           _ActionTile(
             icon: Icons.check_circle_outline,
             title: 'Pointage des Présences',
             subtitle: 'Feuilles d\'appel et statistiques d\'absentéisme',
-            onTap: () {},
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AttendanceScreen())),
           ),
           _ActionTile(
             icon: Icons.receipt_long,
             title: 'Finances & Scolarité',
             subtitle: 'Factures impayées, encaissements et dépenses',
-            onTap: () {},
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FinancesScreen())),
+          ),
+          _ActionTile(
+            icon: Icons.forum_rounded,
+            title: 'Messagerie Interne & Alertes',
+            subtitle: 'Échanges directs avec les parents et annonces',
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesScreen())),
           ),
         ],
       ),
@@ -273,19 +295,22 @@ class _ActionTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppTheme.borderLight),
       ),
-      child: ListTile(
-        leading: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: AppTheme.primaryPurple.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(12),
+      child: Material(
+        color: Colors.transparent,
+        child: ListTile(
+          leading: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryPurple.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: AppTheme.primaryPurple, size: 22),
           ),
-          child: Icon(icon, color: AppTheme.primaryPurple, size: 22),
+          title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textDark)),
+          subtitle: Text(subtitle, style: const TextStyle(fontSize: 11, color: AppTheme.textMuted)),
+          trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: AppTheme.textMuted),
+          onTap: onTap,
         ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textDark)),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11, color: AppTheme.textMuted)),
-        trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: AppTheme.textMuted),
-        onTap: onTap,
       ),
     );
   }
